@@ -1,0 +1,4 @@
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-exporter-otlp-proto-http
+psutil  # required only for --process-metrics; safe to omit if that flag is not used

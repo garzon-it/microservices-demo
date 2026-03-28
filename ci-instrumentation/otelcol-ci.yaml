@@ -1,0 +1,143 @@
+receivers:
+  hostmetrics:
+    collection_interval: 5s
+    scrapers:
+      cpu:
+        metrics:
+          system.cpu.utilization:
+            enabled: true
+          system.cpu.time:
+            enabled: true
+          system.cpu.logical.count:
+            enabled: false
+      memory:
+        metrics:
+          system.memory.usage:
+            enabled: true
+          system.memory.utilization:
+            enabled: false
+      load:
+        metrics:
+          system.cpu.load_average.1m:
+            enabled: true
+          system.cpu.load_average.5m:
+            enabled: true
+
+  otlp:
+    protocols:
+      http:
+        endpoint: 127.0.0.1:4318
+
+processors:
+
+  # LOW-CARDINALITY (ALL SIGNALS)
+  resource/common:
+    attributes:
+      - key: service.namespace
+        value: ${env:CI_SERVICE_NAMESPACE}
+        action: upsert
+      - key: service.name
+        value: ${env:CI_SERVICE_NAME}
+        action: upsert
+      - key: service.instance.id
+        value: ${env:CI_RUNNER_ID}
+        action: upsert
+      - key: cicd.provider.name
+        value: ${env:CI_PROVIDER}
+        action: upsert
+      - key: cicd.pipeline.name
+        value: ${env:CI_PIPELINE_NAME}
+        action: upsert
+      - key: cicd.pipeline.job.name
+        value: ${env:CI_JOB_NAME}
+        action: upsert
+      - key: cicd.pipeline.job.target
+        value: ${env:CI_JOB_TARGET}
+        action: upsert
+      - key: cicd.worker.type
+        value: ${env:CI_WORKER_TYPE}
+        action: upsert
+      - key: host.name
+        value: ${env:CI_RUNNER_ID}
+        action: upsert
+      - key: os.name
+        value: ${env:CI_RUNNER_OS}
+        action: upsert
+      - key: host.arch
+        value: ${env:CI_RUNNER_ARCH}
+        action: upsert
+
+  # HIGH-CARDINALITY (TRACES + LOGS ONLY)
+  resource/run_context:
+    attributes:
+      - key: cicd.pipeline.run.id
+        value: ${env:CI_RUN_ID}
+        action: upsert
+      - key: cicd.pipeline.run.url
+        value: ${env:CI_PIPELINE_RUN_URL}
+        action: upsert
+      - key: cicd.pipeline.run.attempt
+        value: ${env:CI_RUN_ATTEMPT}
+        action: upsert
+      - key: vcs.ref.head.revision
+        value: ${env:CI_COMMIT_SHA}
+        action: upsert
+      - key: vcs.ref.head.name
+        value: ${env:CI_REF_NAME}
+        action: upsert
+      - key: vcs.ref.head.type
+        value: ${env:CI_REF_TYPE}
+        action: upsert
+      - key: vcs.repository.name
+        value: ${env:CI_REPOSITORY}
+        action: upsert
+      - key: vcs.ref.head.url
+        value: ${env:CI_COMMIT_URL}
+        action: upsert
+
+  batch: {}
+
+exporters:
+  file:
+    path: ${env:CI_WORKSPACE}/artifacts/otel/otel-logs.json
+    rotation:
+      max_megabytes: 50
+      max_backups: 2
+
+  file/metrics:
+    path: ${env:CI_WORKSPACE}/artifacts/otel/otel-metrics.json
+    rotation:
+      max_megabytes: 50
+      max_backups: 2
+
+  file/traces:
+    path: ${env:CI_WORKSPACE}/artifacts/otel/otel-traces.json
+    rotation:
+      max_megabytes: 50
+      max_backups: 2
+
+  otlphttp/grafana:
+    endpoint: "https://ci-otlp.garzon-it.com"
+    headers:
+      Authorization: "Basic ${env:OTLP_AUTH_TOKEN}"
+
+service:
+  pipelines:
+
+    # LOGS
+    logs:
+      receivers: [otlp]
+      processors: [resource/common, resource/run_context, batch]
+      exporters: [file, otlphttp/grafana]
+
+    # METRICS
+    metrics:
+      receivers: [hostmetrics]
+      processors: [resource/common, batch]
+      exporters: [file/metrics, otlphttp/grafana]
+
+    # TRACES
+    traces:
+      receivers: [otlp]
+      processors: [resource/common, resource/run_context, batch]
+      exporters: [file/traces, otlphttp/grafana]
