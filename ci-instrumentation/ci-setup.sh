@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-mkdir -p artifacts/otel artifacts/step-logs artifacts/test-results
+mkdir -p artifacts/otel artifacts/task-logs artifacts/test-results
 
 pip install --break-system-packages -r ci-instrumentation/requirements.txt
 

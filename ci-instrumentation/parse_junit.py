@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Parse a JUnit XML file and export each test case as an OTel span.
 
-Test spans are children of the CI step span identified by --name.
+Test spans are children of the CI task span identified by --name.
 
 Usage:
   parse_junit.py --name "Run Playwright tests" <junit-xml-file>
@@ -52,8 +52,8 @@ def _get_test_outcome(testcase_element):
     return False, "passed"
 
 
-def _build_tracer(trace_id_hex, step_span_id_hex):
-    """Set up an OTel tracer and a parent context pointing at the step span."""
+def _build_tracer(trace_id_hex, task_span_id_hex):
+    """Set up an OTel tracer and a parent context pointing at the task span."""
     resource_attrs = {
         "service.name": os.environ.get("CI_SERVICE_NAME", "unknown_service:ciwrap"),
         "cicd.provider.name": os.environ.get("CI_PROVIDER", "unknown"),
@@ -68,23 +68,23 @@ def _build_tracer(trace_id_hex, step_span_id_hex):
     provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(timeout=5)))
     tracer = provider.get_tracer("ci-observability")
 
-    # Point all test spans at the step span as their parent
-    step_span_context = SpanContext(
+    # Point all test spans at the task span as their parent
+    task_span_context = SpanContext(
         trace_id=int(trace_id_hex, 16),
-        span_id=int(step_span_id_hex, 16),
+        span_id=int(task_span_id_hex, 16),
         is_remote=True,
         trace_flags=TraceFlags(TraceFlags.SAMPLED),
     )
-    parent_context = otel_trace.set_span_in_context(NonRecordingSpan(step_span_context))
+    parent_context = otel_trace.set_span_in_context(NonRecordingSpan(task_span_context))
 
     return provider, tracer, parent_context
 
 
-def export_junit(xml_path, step_name, step_target=None):
-    trace_id_hex, step_span_id_hex = traces.get_step_ids(step_name)
+def export_junit(xml_path, task_name, task_target=None):
+    trace_id_hex, task_span_id_hex = traces.get_task_ids(task_name)
     if trace_id_hex is None:
         print(
-            f"ERROR: No trace context found for step '{step_name}'. "
+            f"ERROR: No trace context found for task '{task_name}'. "
             f"Did you forget to run --init-trace?",
             file=sys.stderr,
         )
@@ -99,7 +99,7 @@ def export_junit(xml_path, step_name, step_target=None):
     else:
         test_suites = [xml_root]
 
-    provider, tracer, parent_context = _build_tracer(trace_id_hex, step_span_id_hex)
+    provider, tracer, parent_context = _build_tracer(trace_id_hex, task_span_id_hex)
 
     exported_count = 0
 
@@ -132,9 +132,9 @@ def export_junit(xml_path, step_name, step_target=None):
                 "test.case.name": test_name,
                 "test.case.result.status": status,
                 "test.case.result.duration": duration_seconds,
-                "cicd.pipeline.task.name": step_name,
+                "cicd.pipeline.task.name": task_name,
             }
-            effective_target = step_target or os.environ.get("CI_JOB_TARGET")
+            effective_target = task_target or os.environ.get("CI_JOB_TARGET")
             if effective_target:
                 attrs["cicd.pipeline.task.target"] = effective_target
             span = tracer.start_span(
@@ -151,14 +151,14 @@ def export_junit(xml_path, step_name, step_target=None):
     provider.force_flush()
     provider.shutdown()
     print(f"Exported {exported_count} test spans from {xml_path} "
-          f"(step='{step_name}', trace={trace_id_hex[:16]}...)")
+          f"(task='{task_name}', trace={trace_id_hex[:16]}...)")
     return 0
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--name", required=True,
-                    help="Name of the ciwrap step that produced the XML file")
+                    help="Name of the ciwrap task that produced the XML file")
     ap.add_argument("xml_file", help="Path to JUnit XML file")
     args = ap.parse_args()
     return export_junit(args.xml_file, args.name)

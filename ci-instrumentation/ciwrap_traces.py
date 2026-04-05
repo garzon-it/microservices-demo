@@ -1,9 +1,9 @@
-"""Distributed trace export for CI steps.
+"""Distributed trace export for CI tasks.
 
 Provides three operations:
   - init_trace(): write deterministic trace/span IDs to a context file
   - finish_trace(): export the parent job span
-  - export_step_span(): export a child span for a single CI step
+  - export_task_span(): export a child span for a single CI task
 
 Trace and span IDs are deterministic (SHA-256 of normalized CI_* env vars set
 by setup_ci_context.sh) so every ciwrap.py invocation in the same job shares the
@@ -136,14 +136,14 @@ def _export_span(name, trace_id_bytes, span_id_bytes, parent_span_id_bytes,
     provider.shutdown()
 
 
-def get_step_ids(step_name):
-    """Return (trace_id_hex, span_id_hex) for a step, or (None, None) if no context."""
+def get_task_ids(task_name):
+    """Return (trace_id_hex, span_id_hex) for a task, or (None, None) if no context."""
     ctx = _read_context()
     if ctx is None:
         return None, None
     run_id, run_attempt, job, runner = _ci_env()
-    step_span_id = _deterministic_span_id(run_id, run_attempt, job, runner, step_name)
-    return ctx["trace_id"], step_span_id.hex()
+    task_span_id = _deterministic_span_id(run_id, run_attempt, job, runner, task_name)
+    return ctx["trace_id"], task_span_id.hex()
 
 
 def init_trace():
@@ -196,11 +196,11 @@ def finish_trace():
     print(f"Job span exported (trace_id={ctx['trace_id']}, span_id={ctx['job_span_id']})")
 
 
-def export_step_span(step_name, start_ns, end_ns, exit_code, duration, proc_metrics=None,
-                     step_target=None):
+def export_task_span(task_name, start_ns, end_ns, exit_code, duration, proc_metrics=None,
+                     task_target=None):
     ctx = _read_context()
     if ctx is None:
-        print(f"WARNING: No trace context found for step '{step_name}'. "
+        print(f"WARNING: No trace context found for task '{task_name}'. "
               f"Did you forget to run --init-trace?",
               file=sys.stderr)
         return
@@ -209,13 +209,13 @@ def export_step_span(step_name, start_ns, end_ns, exit_code, duration, proc_metr
     job_span_id = bytes.fromhex(ctx["job_span_id"])
 
     run_id, run_attempt, job, runner = _ci_env()
-    step_span_id = _deterministic_span_id(run_id, run_attempt, job, runner, step_name)
+    task_span_id = _deterministic_span_id(run_id, run_attempt, job, runner, task_name)
 
     result = "failure" if exit_code != 0 else "success"
 
     pipeline_run_url = os.environ.get("CI_PIPELINE_RUN_URL", "")
     attributes = {
-        "cicd.pipeline.task.name": step_name,
+        "cicd.pipeline.task.name": task_name,
         "cicd.pipeline.task.run.url.full": pipeline_run_url,
         "cicd.pipeline.task.run.result": result,
         "cicd.pipeline.task.run.duration": duration,  # ! not in OTel semantic convention
@@ -223,20 +223,20 @@ def export_step_span(step_name, start_ns, end_ns, exit_code, duration, proc_metr
         # Resource attributes are not indexed by Grafana Cloud Tempo for custom keys.
         "cicd.pipeline.run.id": run_id,
     }
-    effective_target = step_target or os.environ.get("CI_JOB_TARGET")
+    effective_target = task_target or os.environ.get("CI_JOB_TARGET")
     if effective_target:
         attributes["cicd.pipeline.task.target"] = effective_target
     if proc_metrics:
         attributes.update(proc_metrics)
 
     _export_span(
-        name=step_name,
+        name=task_name,
         trace_id_bytes=trace_id,
-        span_id_bytes=step_span_id,
+        span_id_bytes=task_span_id,
         parent_span_id_bytes=job_span_id,
         start_time_ns=start_ns,
         end_time_ns=end_ns,
         attributes=attributes,
         is_error=(exit_code != 0),
     )
-    print(f"Step span exported: {step_name} (result={result}, duration={duration:.2f}s)")
+    print(f"Task span exported: {task_name} (result={result}, duration={duration:.2f}s)")

@@ -2,7 +2,7 @@
 """Wrap a CI command: stream stdout/stderr to console and export as OTLP logs + trace span.
 
 Usage:
-  ciwrap.py --name "Step name" -- <command>   # wrap a command
+  ciwrap.py --name "Task name" -- <command>   # wrap a command
   ciwrap.py --init-trace                      # start trace context
   ciwrap.py --finish-trace                    # export job span
 """
@@ -141,8 +141,8 @@ class _ProcessMetricsCollector:
         return result
 
 
-def _create_log_emitter(step_name, trace_id_hex, span_id_hex, step_target=None):
-    """Create an OTLP log emitter for a CI step. Returns (emit_fn, shutdown_fn)."""
+def _create_log_emitter(task_name, trace_id_hex, span_id_hex, task_target=None):
+    """Create an OTLP log emitter for a CI task. Returns (emit_fn, shutdown_fn)."""
     job_target = os.environ.get("CI_JOB_TARGET", "")
     resource = Resource.create({})
     provider = LoggerProvider(resource=resource)
@@ -152,11 +152,11 @@ def _create_log_emitter(step_name, trace_id_hex, span_id_hex, step_target=None):
     trace_id_int = int(trace_id_hex, 16) if trace_id_hex else 0
     span_id_int = int(span_id_hex, 16) if span_id_hex else 0
     flags = TraceFlags(TraceFlags.SAMPLED) if trace_id_hex else TraceFlags.DEFAULT
-    effective_target = step_target or job_target
+    effective_target = task_target or job_target
 
     def emit(body, severity="INFO", timestamp_ns=None, extra_attrs=None):
         severity_number = SeverityNumber.ERROR if severity == "ERROR" else SeverityNumber.INFO
-        attrs = {"cicd.pipeline.task.name": step_name}
+        attrs = {"cicd.pipeline.task.name": task_name}
         if effective_target:
             attrs["cicd.pipeline.task.target"] = effective_target
         if extra_attrs:
@@ -240,7 +240,7 @@ def run_and_tee(cmd, emit, metrics_opts=None):
              extra_attrs={"log.source": source})
 
     duration = time.monotonic() - t0
-    summary = f"__STEP_RESULT__ duration_seconds={duration:.2f} result={result}"
+    summary = f"__TASK_RESULT__ duration_seconds={duration:.2f} result={result}"
     if proc_metrics:
         if "process.cpu.max_percent" in proc_metrics:
             summary += f" peak_cpu_percent={proc_metrics['process.cpu.max_percent']:.1f}"
@@ -267,10 +267,10 @@ def run_and_tee(cmd, emit, metrics_opts=None):
 # CLI dispatch
 
 def cmd_run_step(args):
-    """Run a wrapped command, emit logs via OTLP, and export a step span."""
-    trace_id, span_id = traces.get_step_ids(args.name)
+    """Run a wrapped command, emit logs via OTLP, and export a task span."""
+    trace_id, span_id = traces.get_task_ids(args.name)
     if trace_id is None:
-        print(f"WARNING: No trace context found for step '{args.name}'. "
+        print(f"WARNING: No trace context found for task '{args.name}'. "
               f"Did you forget to run --init-trace?",
               file=sys.stderr)
     emit, shutdown_logs = _create_log_emitter(args.name, trace_id, span_id, args.task_target)
@@ -298,7 +298,7 @@ def cmd_run_step(args):
 
     shutdown_logs()
 
-    traces.export_step_span(args.name, start_ns, end_ns, exit_code, duration, process_metrics,
+    traces.export_task_span(args.name, start_ns, end_ns, exit_code, duration, process_metrics,
                             args.task_target)
 
     if args.junit:
@@ -314,7 +314,7 @@ def cmd_run_step(args):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--name", default=None, help="CI step name")
+    ap.add_argument("--name", default=None, help="CI task name")
     ap.add_argument("--init-trace", action="store_true",
                     help="Initialize trace context (write trace-context.json)")
     ap.add_argument("--finish-trace", action="store_true",
@@ -323,7 +323,7 @@ def main():
                     help="Path to JUnit XML file to parse and export as test spans")
     ap.add_argument("--task-target", default=None, metavar="TARGET",
                     help="Component or microservice this task targets (e.g. 'catalog-api'). "
-                         "Attached as cicd.pipeline.task.target on the step span and every log record.")
+                         "Attached as cicd.pipeline.task.target on the task span and every log record.")
     ap.add_argument("--process-metrics", action="store_true",
                     help="Collect peak CPU/RSS/IO for the subprocess (requires psutil)")
     ap.add_argument("--process-include-children", action="store_true",
@@ -344,7 +344,7 @@ def main():
         return 2
 
     if not args.command:
-        print("Usage: ciwrap.py --name \"Step name\" -- <command>", file=sys.stderr)
+        print("Usage: ciwrap.py --name \"Task name\" -- <command>", file=sys.stderr)
         return 2
 
     return cmd_run_step(args)
